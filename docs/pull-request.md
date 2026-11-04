@@ -11,9 +11,16 @@ Includes SAM infrastructure with private encrypted buckets, scoped model access,
 CloudWatch retention and an async SQS failure destination; synthetic fixtures;
 CI configuration; contributor, architecture, version, deployment and cleanup docs.
 
+## AWS-first usage
+
+README now leads with deployment in AWS CloudShell, real event-driven verification,
+cost assumptions and full cleanup. Added opt-in account-checked AWS scripts and
+offline safety checks. SAM defaults to Nova Micro; error records include source
+references to correlate live S3 events. No live account access was performed.
+
 ## Validation
 
-35 local tests passed with mocked services, including a botocore Converse contract
+44 local tests passed with mocked services, including a botocore Converse contract
 stub. Dependency consistency, Python compilation and isolated local package imports passed. Initial SAM lint
 accepted the template. SAM build remains unverified due to sandbox networking and
 the unavailable environment guard profile; see docs/verification.md.

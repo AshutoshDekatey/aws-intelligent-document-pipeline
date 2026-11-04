@@ -1,69 +1,124 @@
-# Deployment and cleanup
+# Deploy in your AWS account
 
-**Only execute after explicit account-owner approval for AWS access and charges.**
-No command below was run against AWS during implementation. Use a disposable
-sandbox and synthetic inputs. S3, Lambda, Bedrock, CloudWatch, SQS and SAM artifacts
-may cost money. Concurrency limits parallel work, not total spend; establish
-budgets/monitoring first.
+This guide runs the real project in AWS. You execute it as the account owner.
+Codex has not accessed your AWS account or deployed this stack. Deployment,
+verification and cleanup use real APIs and may incur charges: read [costs](costs.md).
+Use synthetic inputs and a sandbox account; avoid the root user.
 
-Prerequisites: Python 3.12, README dependencies, AWS CLI v2, approved deployment
-role with CloudFormation/IAM/S3/Lambda/Logs/SQS permissions, and regional Bedrock
-model access. Confirm the selected direct foundation model supports Converse in
-the region; obtain provider access if needed. Never put credentials in source.
+## 1. Prepare access and region
+
+Sign in to AWS with an authorized IAM Identity Center/IAM role. Choose
+**US East (N. Virginia), us-east-1** for this walkthrough, then open **CloudShell**.
+CloudShell provides temporary credentials; do not run `aws configure` or paste keys.
+A local workstation with AWS CLI v2/SSO and the same tools also works.
+
+Your deployment principal needs CloudFormation stack management, S3 bucket/object
+management, Lambda management, IAM role creation/policy attachment/PassRole,
+CloudWatch Logs and SQS management. The live verifier additionally reads stack
+outputs/logs and reads/writes project S3 objects; cleanup deletes project objects,
+versions, buckets and the stack and updates Lambda concurrency/S3 notifications.
+Use an administrator-approved sandbox role; IAM/SCP/permission boundaries can
+prevent deployment. The narrowly scoped Lambda role is created by SAM.
+
+In the Bedrock console for us-east-1, check that `amazon.nova-micro-v1:0` is
+available for direct on-demand Converse invocation. Complete access prerequisites
+if prompted. If unavailable, stop and choose a supported **direct regional model**,
+then update MODEL_ID below and recalculate costs. This template's IAM does not
+support cross-region inference profiles or their ARNs.
 
 ```bash
-export AWS_PROFILE=your-approved-sandbox-profile
 export AWS_REGION=us-east-1
+export AWS_DEFAULT_REGION="$AWS_REGION"
 export STACK=invoice-v01
-# Use short lowercase stack names: generated bucket name must be <=63 characters.
-aws sts get-caller-identity  # verify approved account first
-.venv/bin/sam validate --lint
-.venv/bin/sam build
-.venv/bin/sam deploy --guided --stack-name "$STACK" --region "$AWS_REGION" \
-  --capabilities CAPABILITY_IAM --parameter-overrides \
-  ModelId=anthropic.claude-3-haiku-20240307-v1:0
+export MODEL_ID=amazon.nova-micro-v1:0
+aws sts get-caller-identity
 ```
 
-Review the changeset before accepting; keep confirmation enabled. SAM can create
-an additional deployment-artifact bucket. Capture actual stack outputs:
+Check that the printed account is the account you intend to bill. Set the exact
+12-digit account ID yourself (the scripts compare it before writes/deletions):
 
 ```bash
-aws cloudformation describe-stacks --stack-name "$STACK" --query 'Stacks[0].Outputs'
-export INPUT_BUCKET=actual-InputBucketName-output
-export OUTPUT_BUCKET=actual-OutputBucketName-output
-export FUNCTION=actual-FunctionName-output
-aws s3 cp examples/invoice.txt "s3://$INPUT_BUCKET/incoming/synthetic-001.txt"
-aws s3 ls "s3://$OUTPUT_BUCKET/validated/"
-aws s3 ls "s3://$OUTPUT_BUCKET/errors/" --recursive
-aws logs tail "/aws/lambda/$FUNCTION" --since 10m
+export EXPECTED_ACCOUNT=123456789012  # REPLACE with your own account ID
 ```
 
-Allow asynchronous delivery. Download validated JSON, compare it to expected.json,
-and inspect source version/trace/request ID. Upload malformed.txt and verify a
-validation error without a validated result for that trace. A successful upload
-alone proves neither extraction nor event delivery. Test controlled model failure
-routing to SQS in the approved sandbox. All these live checks remain unrun.
+Keep the stack name short and lowercase: generated S3 names must fit 63 characters.
+Set a small billing budget/notification in Billing if desired; budgets can lag
+and are not a hard spending limit. Do not upload anything until deployment is ready.
 
-## Cleanup (destructive; verify account and exact resource names)
-
-Stop uploads. Record both bucket names and queue URL before stack deletion.
+## 2. Get every project/deployment file from GitHub
 
 ```bash
-.venv/bin/sam delete --stack-name "$STACK" --region "$AWS_REGION"
+git clone --branch feat/invoice-pipeline-v0.1 \
+  https://github.com/AshutoshDekatey/aws-intelligent-document-pipeline.git
+cd aws-intelligent-document-pipeline
 ```
 
-Confirm Lambda, queue and logs are deleted. Buckets are retained intentionally.
-In the S3 console, open the approved disposable input bucket, enable **Show
-versions**, and delete every version and delete marker across all pages.
-`aws s3 rm --recursive` does not remove old versions. Empty the output bucket:
+The feature branch is intentional until a PR is merged into main. No ZIP downloads,
+manual Lambda code edits or console-created pipeline resources are needed.
+
+CloudShell images/tool versions may change. Check Python 3.12 first:
 
 ```bash
-aws s3 rm "s3://$OUTPUT_BUCKET" --recursive
-aws s3api delete-bucket --bucket "$INPUT_BUCKET"
-aws s3api delete-bucket --bucket "$OUTPUT_BUCKET"
+python3.12 --version
 ```
 
-Remove only this stack's unused SAM artifacts. Delete the artifact bucket only
-if exclusive to this experiment and empty; preserve shared artifacts. Verify
-stack deletion and removal of retained buckets/artifacts. Check billing later
-because usage reports can lag.
+If absent on an Amazon Linux 2023 CloudShell image, install it:
+
+```bash
+sudo dnf install -y python3.12 python3.12-pip
+```
+
+If that package is unavailable on your CloudShell image, use a Python 3.12
+workstation; do not change the Lambda runtime just to make the build pass.
+Keep tooling in temporary storage to reduce CloudShell home usage:
+
+```bash
+python3.12 -m venv /tmp/invoice-tools
+source /tmp/invoice-tools/bin/activate
+python -m pip install -r requirements.txt aws-sam-cli==1.145.2
+export SAM_CLI_TELEMETRY=0
+sam --version
+```
+
+CloudShell sessions and /tmp files are temporary; repeat tool installation after
+session reset. Project source remains on GitHub. CloudShell download/build disk
+space errors require freeing your own temporary files or using a workstation.
+The setup uses no Docker or `sam local`.
+
+## 3. Validate, build, review and deploy
+
+```bash
+sam validate --lint
+sam build
+sam deploy --guided --stack-name "$STACK" --region "$AWS_REGION" \
+  --capabilities CAPABILITY_IAM --parameter-overrides ModelId="$MODEL_ID"
+```
+
+In guided setup: confirm the account, region, stack and model; allow SAM to create
+the execution IAM role; keep **Confirm changes before deploy = Y** and rollback
+enabled. Review the changeset before approving. SAM can create a shared managed
+artifact bucket and supporting stack. It can save samconfig.toml locally; the file
+is ignored because configuration is account-specific, and must contain no secrets.
+
+The pipeline creates two encrypted private S3 buckets, Lambda + execution role,
+CloudWatch log group (14 days), encrypted SQS failure queue (14 days), and S3 event
+notification. There is no EC2, VPC, NAT Gateway, database or provisioned concurrency.
+Reserved concurrency is 2; it is a cap, not pre-purchased capacity. Some new
+accounts have insufficient Lambda concurrency quota to reserve 2: request quota
+or remove that optional property in your own reviewed template before redeploying.
+Concurrency caps do not limit total invocations or cost.
+
+Capture outputs and deployment evidence:
+
+```bash
+mkdir -p artifacts
+aws cloudformation describe-stacks --stack-name "$STACK" \
+  --region "$AWS_REGION" > artifacts/deployed-stack.json
+aws cloudformation describe-stacks --stack-name "$STACK" \
+  --query 'Stacks[0].Outputs' --output table
+```
+
+CloudFormation must show CREATE_COMPLETE/UPDATE_COMPLETE. This alone does not
+verify event delivery/extraction. Continue to [live verification](live-verification.md),
+then [cleanup](cleanup.md). On any failure, inspect stack events and use
+[troubleshooting](troubleshooting.md); rolled-back/retained resources may still need cleanup.

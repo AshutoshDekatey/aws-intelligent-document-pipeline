@@ -4,7 +4,7 @@ Description: Synthetic text invoice pipeline v0.1
 Parameters:
   ModelId:
     Type: String
-    Default: anthropic.claude-3-haiku-20240307-v1:0
+    Default: amazon.nova-micro-v1:0
     Description: Regionally available Converse model ID; use a direct foundation model.
 Resources:
   InputBucket:
@@ -103,3 +103,5 @@ Outputs:
     Value: !Ref FailureQueue
   FunctionName:
     Value: !Ref Processor
+  ModelIdUsed:
+    Value: !Ref ModelId

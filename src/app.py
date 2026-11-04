@@ -84,7 +84,8 @@ def process(event, context, s3, bedrock, output_bucket, model):
         except Exception as exc:
             # Never log document contents, model output, or exception messages.
             error = dict(schema_version='0.1', trace_id=trace, request_id=request_id,
-                         stage=stage, error_type=type(exc).__name__, status='failed')
+                         stage=stage, error_type=type(exc).__name__, status='failed',
+                         source={'bucket': bucket, 'key': key, 'version_id': version})
             LOG.error(json.dumps(error))
             s3.put_object(Bucket=output_bucket, Key=f'errors/{trace}/{request_id}.json',
                           Body=json.dumps(error).encode(), ContentType='application/json')

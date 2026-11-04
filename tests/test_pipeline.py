@@ -71,7 +71,9 @@ def test_schema_and_rounding(invoice):
 @pytest.mark.parametrize('raw', [b'', b'\xff', b'\x00bad', b' ' * 20, b'a' * (MAX_BYTES + 1)])
 def test_malformed_document(aws, raw):
     aws[0].get_object.side_effect = lambda **kw: {'Body': io.BytesIO(raw)}
-    assert run(aws)['results'][0]['stage'] == 'document'
+    result = run(aws)['results'][0]
+    assert result['stage'] == 'document'
+    assert result['source']['key'] == 'incoming/test invoice.txt'
     aws[1].converse.assert_not_called()
     assert aws[0].put_object.call_args.kwargs['Key'].startswith('errors/')
 

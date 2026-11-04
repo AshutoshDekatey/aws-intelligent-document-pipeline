@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — AWS-first deployment workflow
+
+- Made real AWS deployment and live acceptance the primary README workflow.
+- Added CloudShell setup, regional model/access prerequisites, troubleshooting,
+  illustrative cost estimates, live verification and complete cleanup guides.
+- Added opt-in account-checked live verification and version-aware cleanup scripts.
+- Selected Amazon Nova Micro as the low-cost default direct Bedrock model.
+- Added source references to error records for live event/output correlation.
+- Added offline safety tests for live scripts. Real AWS execution remains unverified.
+
 ## 0.1.0 — 2026-11-04
 
 - Added text invoice processing with S3 events, Lambda and Bedrock Converse.
