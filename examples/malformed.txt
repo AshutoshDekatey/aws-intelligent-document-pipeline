@@ -1,0 +1,5 @@
+SYNTHETIC INVALID INVOICE
+Vendor: Example Supply Ltd
+Invoice date: 2026-02-30
+Currency: XYZ
+Total: unknown

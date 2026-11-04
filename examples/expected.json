@@ -1,0 +1,13 @@
+{
+  "vendor": "Example Supply Ltd",
+  "invoice_number": "SYN-2026-001",
+  "invoice_date": "2026-11-01",
+  "currency": "USD",
+  "line_items": [
+    {"description": "Paper boxes", "quantity": "2", "unit_price": "12.50", "amount": "25.00"},
+    {"description": "Pens", "quantity": "3", "unit_price": "2.00", "amount": "6.00"}
+  ],
+  "subtotal": "31.00",
+  "tax": "3.10",
+  "total": "34.10"
+}
