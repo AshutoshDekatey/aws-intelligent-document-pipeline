@@ -88,8 +88,8 @@ The setup uses no Docker or `sam local`.
 ## 3. Validate, build, review and deploy
 
 ```bash
-sam validate --lint
-sam build
+sam validate --lint --template-file template-v0.1.yaml
+sam build --template-file template-v0.1.yaml
 sam deploy --guided --stack-name "$STACK" --region "$AWS_REGION" \
   --capabilities CAPABILITY_IAM --parameter-overrides ModelId="$MODEL_ID"
 ```

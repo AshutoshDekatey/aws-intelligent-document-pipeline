@@ -9,4 +9,4 @@ invoke AWS APIs, upload documents, or create resources without explicit user
 approval. Never commit secrets, personal invoices, .env, or samconfig.toml.
 Use Decimal for financial arithmetic; maintain strict schema validation.
 Document changes in CHANGELOG.md. Distinguish local validation from live AWS
-verification. The v0.1 scope excludes OCR, PDFs, and payment automation.
+verification. Keep the v0.1 text-only template deployable. v0.2 supports raster OCR and excludes PDFs and payment automation.
