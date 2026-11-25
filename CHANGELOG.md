@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0 — pending live acceptance
+
+- Added EventBridge, Standard Step Functions, Textract image OCR, Pydantic and DynamoDB deduplication.
+- Added SQS review and delivery queues, bounded retries and CloudWatch alarms.
+- Added browser deployment packaging, eight-case acceptance and account-checked teardown.
+- Kept the v0.1 template, handler and test coverage.
+
 ## Unreleased — AWS-first deployment workflow
 
 - Made real AWS deployment and live acceptance the primary README workflow.

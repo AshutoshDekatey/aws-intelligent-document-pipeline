@@ -1,10 +1,13 @@
-name: Local verification
+name: Offline verification and console package
 on: [push, pull_request]
 permissions:
   contents: read
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      AWS_EC2_METADATA_DISABLED: 'true'
+      SAM_CLI_TELEMETRY: '0'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -14,4 +17,12 @@ jobs:
       - run: python -m pip install -r requirements-dev.txt
       - run: pytest -q
       - run: sam validate --lint
+      - run: sam validate --lint --template-file template-v0.1.yaml
       - run: sam build
+      - run: python scripts/package_console.py
+      - run: sam validate --lint --template-file artifacts/console/finance-console.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: finance-console
+          path: artifacts/console/
+          if-no-files-found: error

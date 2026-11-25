@@ -1,20 +1,28 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Synthetic text invoice pipeline v0.1
+Description: Synthetic financial document pipeline v0.2
 Parameters:
   ModelId:
     Type: String
     Default: amazon.nova-micro-v1:0
-    Description: Regionally available Converse model ID; use a direct foundation model.
+    AllowedPattern: '[a-zA-Z0-9][a-zA-Z0-9.:-]*'
+    Description: Direct regional Bedrock foundation model ID that supports Converse.
+  EnableDemoFailures:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Enable controlled transient failures for recoverable.txt and exhausted.txt.
+Conditions:
+  DemoMode: !Equals [!Ref EnableDemoFailures, 'true']
 Resources:
   InputBucket:
     Type: AWS::S3::Bucket
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
     Properties:
-      BucketName: !Sub '${AWS::StackName}-${AWS::Region}-${AWS::AccountId}-in'
       VersioningConfiguration:
         Status: Enabled
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -26,9 +34,9 @@ Resources:
         RestrictPublicBuckets: true
   OutputBucket:
     Type: AWS::S3::Bucket
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
     Properties:
+      VersioningConfiguration:
+        Status: Enabled
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -38,70 +46,226 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
-  FailureQueue:
+  Documents:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: document_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: document_id
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+  ReviewQueue:
     Type: AWS::SQS::Queue
     Properties:
       SqsManagedSseEnabled: true
       MessageRetentionPeriod: 1209600
-  Processor:
-    Type: AWS::Serverless::Function
+  DeliveryDeadLetterQueue:
+    Type: AWS::SQS::Queue
     Properties:
-      CodeUri: src/
-      Handler: app.handler
-      Runtime: python3.12
-      MemorySize: 256
-      Timeout: 120
-      ReservedConcurrentExecutions: 2
-      Environment:
-        Variables:
-          OUTPUT_BUCKET: !Ref OutputBucket
-          MODEL_ID: !Ref ModelId
-      Policies:
-        - Statement:
-            - Effect: Allow
-              Action: [s3:GetObject, s3:GetObjectVersion]
-              Resource: !Sub 'arn:${AWS::Partition}:s3:::${AWS::StackName}-${AWS::Region}-${AWS::AccountId}-in/incoming/*'
-            - Effect: Allow
-              Action: s3:PutObject
-              Resource:
-                - !Sub '${OutputBucket.Arn}/validated/*'
-                - !Sub '${OutputBucket.Arn}/errors/*'
-            - Effect: Allow
-              Action: bedrock:InvokeModel
-              Resource: !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${ModelId}'
-      EventInvokeConfig:
-        MaximumRetryAttempts: 2
-        MaximumEventAgeInSeconds: 3600
-        DestinationConfig:
-          OnFailure:
-            Type: SQS
-            Destination: !GetAtt FailureQueue.Arn
-      Events:
-        InvoiceUploaded:
-          Type: S3
-          Properties:
-            Bucket: !Ref InputBucket
-            Events: s3:ObjectCreated:*
-            Filter:
-              S3Key:
-                Rules:
-                  - Name: prefix
-                    Value: incoming/
-                  - Name: suffix
-                    Value: .txt
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 1209600
   ProcessorLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub '/aws/lambda/${Processor}'
-      RetentionInDays: 14
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-finance'
+      RetentionInDays: 3
+  Processor:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-finance'
+      CodeUri: src/
+      Handler: workflow.handler
+      Runtime: python3.12
+      Architectures: [x86_64]
+      MemorySize: 256
+      Timeout: 100
+      Environment:
+        Variables:
+          INPUT_BUCKET: !Ref InputBucket
+          OUTPUT_BUCKET: !Ref OutputBucket
+          DOCUMENTS_TABLE: !Ref Documents
+          MODEL_ID: !Ref ModelId
+          ENABLE_DEMO_FAILURES: !Ref EnableDemoFailures
+      LoggingConfig:
+        LogGroup: !Ref ProcessorLogGroup
+      Role: !GetAtt ProcessorRole.Arn
+  ProcessorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ProcessDocuments
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${ProcessorLogGroup}:log-stream:*'
+              - Effect: Allow
+                Action: s3:GetObjectVersion
+                Resource: !Sub '${InputBucket.Arn}/incoming/*'
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject]
+                Resource: !Sub '${OutputBucket.Arn}/validated/*'
+              - Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem]
+                Resource: !GetAtt Documents.Arn
+              # DetectDocumentText sends Bytes and supports no resource-level ARN.
+              - Effect: Allow
+                Action: textract:DetectDocumentText
+                Resource: '*'
+              - Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource: !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${ModelId}'
+  Pipeline:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Type: STANDARD
+      DefinitionUri: statemachine/pipeline.asl.json
+      DefinitionSubstitutions:
+        ProcessorArn: !GetAtt Processor.Arn
+        ReviewQueueUrl: !Ref ReviewQueue
+        Partition: !Ref AWS::Partition
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource: !GetAtt Processor.Arn
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt ReviewQueue.Arn
+  EventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StartPipeline
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: states:StartExecution
+                Resource: !Ref Pipeline
+  DeliveryDeadLetterPolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref DeliveryDeadLetterQueue]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt DeliveryDeadLetterQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Sub 'arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/${AWS::StackName}-uploads'
+  UploadRule:
+    Type: AWS::Events::Rule
+    DependsOn: DeliveryDeadLetterPolicy
+    Properties:
+      Name: !Sub '${AWS::StackName}-uploads'
+      EventPattern:
+        source: [aws.s3]
+        detail-type: ['Object Created']
+        detail:
+          bucket:
+            name: [!Ref InputBucket]
+          object:
+            key:
+              - prefix: incoming/
+      State: ENABLED
+      Targets:
+        - Id: StartPipeline
+          Arn: !Ref Pipeline
+          RoleArn: !GetAtt EventBridgeRole.Arn
+          RetryPolicy:
+            MaximumEventAgeInSeconds: 300
+            MaximumRetryAttempts: 3
+          DeadLetterConfig:
+            Arn: !GetAtt DeliveryDeadLetterQueue.Arn
+  WorkflowFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: A document execution failed or requires review.
+      Namespace: AWS/States
+      MetricName: ExecutionsFailed
+      Dimensions:
+        - Name: StateMachineArn
+          Value: !Ref Pipeline
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Threshold: 1
+      EvaluationPeriods: 1
+      Period: 60
+      Statistic: Sum
+      TreatMissingData: notBreaching
+  TimeoutAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: A workflow exceeded its total execution timeout.
+      Namespace: AWS/States
+      MetricName: ExecutionsTimedOut
+      Dimensions:
+        - Name: StateMachineArn
+          Value: !Ref Pipeline
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Threshold: 1
+      EvaluationPeriods: 1
+      Period: 60
+      Statistic: Sum
+      TreatMissingData: notBreaching
+  DeliveryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: The EventBridge delivery dead-letter queue contains failed starts.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt DeliveryDeadLetterQueue.QueueName
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Threshold: 1
+      EvaluationPeriods: 1
+      Period: 60
+      Statistic: Maximum
+      TreatMissingData: notBreaching
 Outputs:
   InputBucketName:
     Value: !Ref InputBucket
   OutputBucketName:
     Value: !Ref OutputBucket
-  FailureQueueUrl:
-    Value: !Ref FailureQueue
+  StateMachineArn:
+    Value: !Ref Pipeline
+  DocumentsTable:
+    Value: !Ref Documents
+  ReviewQueueUrl:
+    Value: !Ref ReviewQueue
+  DeliveryDeadLetterQueueUrl:
+    Value: !Ref DeliveryDeadLetterQueue
   FunctionName:
     Value: !Ref Processor
+  ProcessorLogGroupName:
+    Value: !Ref ProcessorLogGroup
+  UploadRuleName:
+    Value: !Ref UploadRule
   ModelIdUsed:
     Value: !Ref ModelId
+  DemoFailuresEnabled:
+    Value: !If [DemoMode, 'true', 'false']

@@ -1,0 +1,4 @@
+# Fixture byte identity is part of the acceptance contract.
+examples/*.txt text eol=lf
+examples/v02/*.txt text eol=lf
+examples/v02/*.csv text eol=lf

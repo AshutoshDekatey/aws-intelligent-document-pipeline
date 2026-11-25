@@ -1,0 +1,11 @@
+SYNTHETIC INVOICE — NOT A REAL TRANSACTION
+Vendor: Example Supply Ltd
+Invoice number: SYN-2026-005
+Invoice date: 2026-11-01
+Currency: USD
+Description | Quantity | Unit price | Amount
+Paper boxes | 2 | 12.50 | 25.00
+Pens | 3 | 2.00 | 6.00
+Subtotal: 31.00
+Tax: 3.10
+Total: 34.11

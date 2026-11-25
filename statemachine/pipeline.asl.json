@@ -1,0 +1,341 @@
+{
+  "Comment": "Synthetic financial document processing",
+  "StartAt": "Initialize",
+  "TimeoutSeconds": 420,
+  "States": {
+    "Initialize": {
+      "Type": "Pass",
+      "Parameters": {
+        "event.$": "$",
+        "execution_id.$": "$$.Execution.Id"
+      },
+      "Next": "IgnoreFolderMarkers"
+    },
+    "IgnoreFolderMarkers": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "And": [
+            {
+              "Variable": "$.event.detail.object.key",
+              "IsPresent": true
+            },
+            {
+              "Variable": "$.event.detail.object.key",
+              "IsString": true
+            },
+            {
+              "Variable": "$.event.detail.object.key",
+              "StringMatches": "*/"
+            },
+            {
+              "Variable": "$.event.detail.object.size",
+              "IsPresent": true
+            },
+            {
+              "Variable": "$.event.detail.object.size",
+              "NumericEquals": 0
+            }
+          ],
+          "Next": "FolderMarker"
+        }
+      ],
+      "Default": "ValidateDocument"
+    },
+    "FolderMarker": {
+      "Type": "Succeed"
+    },
+    "ValidateDocument": {
+      "Type": "Task",
+      "Resource": "${ProcessorArn}",
+      "TimeoutSeconds": 30,
+      "Parameters": {
+        "action": "Inspect",
+        "state.$": "$",
+        "retry.$": "$$.State.RetryCount"
+      },
+      "ResultPath": "$.document",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "RetryableFailure",
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException",
+            "States.Timeout",
+            "Sandbox.Timedout",
+            "Lambda.Unknown"
+          ],
+          "IntervalSeconds": 2,
+          "BackoffRate": 2,
+          "MaxAttempts": 2,
+          "JitterStrategy": "FULL"
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.failure",
+          "Next": "RecordReview"
+        }
+      ],
+      "Next": "ClaimDocument"
+    },
+    "ClaimDocument": {
+      "Type": "Task",
+      "Resource": "${ProcessorArn}",
+      "TimeoutSeconds": 30,
+      "Parameters": {
+        "action": "Claim",
+        "state.$": "$",
+        "retry.$": "$$.State.RetryCount"
+      },
+      "ResultPath": "$.claim",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "RetryableFailure",
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException",
+            "States.Timeout",
+            "Sandbox.Timedout",
+            "Lambda.Unknown"
+          ],
+          "IntervalSeconds": 2,
+          "BackoffRate": 2,
+          "MaxAttempts": 2,
+          "JitterStrategy": "FULL"
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.failure",
+          "Next": "RecordReview"
+        }
+      ],
+      "Next": "RouteClaim"
+    },
+    "RouteClaim": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.claim.outcome",
+          "StringEquals": "CLAIMED",
+          "Next": "ExtractAndValidate"
+        }
+      ],
+      "Default": "Duplicate"
+    },
+    "Duplicate": {
+      "Type": "Succeed",
+      "OutputPath": "$.claim"
+    },
+    "ExtractAndValidate": {
+      "Type": "Task",
+      "Resource": "${ProcessorArn}",
+      "TimeoutSeconds": 110,
+      "Parameters": {
+        "action": "Extract",
+        "state.$": "$",
+        "retry.$": "$$.State.RetryCount"
+      },
+      "ResultPath": null,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "RetryableFailure",
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException",
+            "States.Timeout",
+            "Sandbox.Timedout",
+            "Lambda.Unknown"
+          ],
+          "IntervalSeconds": 2,
+          "BackoffRate": 2,
+          "MaxAttempts": 2,
+          "JitterStrategy": "FULL"
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.failure",
+          "Next": "RecordReview"
+        }
+      ],
+      "Next": "PublishValidated"
+    },
+    "PublishValidated": {
+      "Type": "Task",
+      "Resource": "${ProcessorArn}",
+      "TimeoutSeconds": 30,
+      "Parameters": {
+        "action": "Publish",
+        "state.$": "$",
+        "retry.$": "$$.State.RetryCount"
+      },
+      "ResultPath": "$.result",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "RetryableFailure",
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException",
+            "States.Timeout",
+            "Sandbox.Timedout",
+            "Lambda.Unknown"
+          ],
+          "IntervalSeconds": 2,
+          "BackoffRate": 2,
+          "MaxAttempts": 2,
+          "JitterStrategy": "FULL"
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.failure",
+          "Next": "RecordReview"
+        }
+      ],
+      "Next": "Accepted"
+    },
+    "Accepted": {
+      "Type": "Succeed",
+      "OutputPath": "$.result"
+    },
+    "RecordReview": {
+      "Type": "Task",
+      "Resource": "${ProcessorArn}",
+      "TimeoutSeconds": 30,
+      "Parameters": {
+        "action": "Review",
+        "state.$": "$",
+        "retry.$": "$$.State.RetryCount"
+      },
+      "ResultPath": "$.review",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "RetryableFailure",
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException",
+            "States.Timeout",
+            "Sandbox.Timedout",
+            "Lambda.Unknown"
+          ],
+          "IntervalSeconds": 2,
+          "BackoffRate": 2,
+          "MaxAttempts": 2,
+          "JitterStrategy": "FULL"
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.failure",
+          "Next": "PrepareRecordingFailure"
+        }
+      ],
+      "Next": "NotifyReview"
+    },
+    "NotifyReview": {
+      "Type": "Task",
+      "Resource": "arn:${Partition}:states:::sqs:sendMessage",
+      "Parameters": {
+        "QueueUrl": "${ReviewQueueUrl}",
+        "MessageBody.$": "States.JsonToString($.review)"
+      },
+      "TimeoutSeconds": 10,
+      "ResultPath": null,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": null,
+          "Next": "ReviewDeliveryFailed"
+        }
+      ],
+      "Next": "NeedsReview"
+    },
+    "PrepareRecordingFailure": {
+      "Type": "Pass",
+      "Parameters": {
+        "execution_id.$": "$.execution_id",
+        "error.$": "$.failure.Error",
+        "classification": "recording_failure"
+      },
+      "ResultPath": "$.review",
+      "Next": "NotifyFallback"
+    },
+    "NotifyFallback": {
+      "Type": "Task",
+      "Resource": "arn:${Partition}:states:::sqs:sendMessage",
+      "Parameters": {
+        "QueueUrl": "${ReviewQueueUrl}",
+        "MessageBody.$": "States.JsonToString($.review)"
+      },
+      "TimeoutSeconds": 10,
+      "ResultPath": null,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": null,
+          "Next": "ReviewDeliveryFailed"
+        }
+      ],
+      "Next": "NeedsReview"
+    },
+    "NeedsReview": {
+      "Type": "Fail",
+      "Error": "ReviewRequired",
+      "Cause": "Inspect the review queue and execution"
+    },
+    "ReviewDeliveryFailed": {
+      "Type": "Fail",
+      "Error": "ReviewDeliveryFailed",
+      "Cause": "Inspect the failed execution and restore SQS access"
+    }
+  }
+}
